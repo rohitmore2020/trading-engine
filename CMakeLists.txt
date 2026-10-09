@@ -30,6 +30,7 @@ include(cmake/Sanitizers.cmake)
 add_library(te_core STATIC
     src/placeholder.cpp
     src/validation.cpp
+    src/order_book.cpp
 )
 
 target_include_directories(te_core
@@ -55,6 +56,16 @@ add_executable(te_engine
 )
 
 target_link_libraries(te_engine
+    PRIVATE
+        te_core
+)
+
+# Order Book interactive CLI
+add_executable(book_cli
+    apps/book_cli.cpp
+)
+
+target_link_libraries(book_cli
     PRIVATE
         te_core
 )
