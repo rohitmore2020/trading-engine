@@ -94,7 +94,7 @@ RejectReason OrderBook::cancel(OrderId id) {
     return RejectReason::None;
 }
 
-MatchResult OrderBook::modify(OrderId id, Price new_price, Quantity new_quantity) {
+MatchResult OrderBook::modify(OrderId id, Price new_price, Quantity new_quantity, Timestamp new_timestamp) {
     if (new_quantity == 0) {
         const auto reject = cancel(id);
         return MatchResult{.trades = {}, .reject = reject, .unfilled = 0};
@@ -128,7 +128,7 @@ MatchResult OrderBook::modify(OrderId id, Price new_price, Quantity new_quantity
     }
 
     // Otherwise (price changed or quantity increased): Cancel and replace at back of queue
-    const Timestamp ts = loc.it->timestamp;
+    const Timestamp ts = (new_timestamp != 0) ? new_timestamp : loc.it->timestamp;
     static_cast<void>(cancel(id));
 
     NewOrder replacement{
@@ -243,6 +243,110 @@ void OrderBook::rest_order(const Order& order) {
 
         auto it = std::prev(level.orders.end());
         index_[order.id] = OrderLocator{.side = Side::Sell, .price = order.price, .it = it};
+    }
+}
+
+void OrderBook::check_invariants() const {
+    // 1. Book must never be crossed
+    const auto bb = best_bid();
+    const auto ba = best_ask();
+    if (bb && ba && *bb >= *ba) {
+        throw std::logic_error("Invariant violation: Book is crossed! best_bid=" +
+                               std::to_string(*bb) + " >= best_ask=" + std::to_string(*ba));
+    }
+
+    std::size_t counted_orders = 0;
+
+    // 2. Validate Bids
+    Price prev_bid_price = INT64_MAX;
+    for (const auto& [price, level] : bids_) {
+        if (price >= prev_bid_price) {
+            throw std::logic_error("Invariant violation: Bids not sorted strictly descending");
+        }
+        prev_bid_price = price;
+
+        if (level.orders.empty()) {
+            throw std::logic_error("Invariant violation: Empty price level in bids at " + std::to_string(price));
+        }
+
+        Quantity level_sum = 0;
+        Timestamp prev_ts = 0;
+        for (const auto& order : level.orders) {
+            if (order.remaining == 0 || order.remaining > order.quantity) {
+                throw std::logic_error("Invariant violation: Invalid order quantities in bid " + std::to_string(order.id));
+            }
+            if (order.price != price || order.side != Side::Buy) {
+                throw std::logic_error("Invariant violation: Order properties mismatch with bid level");
+            }
+            if (order.timestamp < prev_ts) {
+                throw std::logic_error("Invariant violation: Bids FIFO timestamp order violated at level " + std::to_string(price));
+            }
+            prev_ts = order.timestamp;
+            level_sum += order.remaining;
+
+            // Check index mapping
+            const auto it = index_.find(order.id);
+            if (it == index_.end()) {
+                throw std::logic_error("Invariant violation: Resting bid order " + std::to_string(order.id) + " not in index");
+            }
+            if (it->second.side != Side::Buy || it->second.price != price || it->second.it->id != order.id) {
+                throw std::logic_error("Invariant violation: Locator index corrupted for bid " + std::to_string(order.id));
+            }
+            counted_orders++;
+        }
+
+        if (level_sum != level.total_quantity) {
+            throw std::logic_error("Invariant violation: Bid total_quantity mismatch at " + std::to_string(price));
+        }
+    }
+
+    // 3. Validate Asks
+    Price prev_ask_price = -1;
+    for (const auto& [price, level] : asks_) {
+        if (price <= prev_ask_price) {
+            throw std::logic_error("Invariant violation: Asks not sorted strictly ascending");
+        }
+        prev_ask_price = price;
+
+        if (level.orders.empty()) {
+            throw std::logic_error("Invariant violation: Empty price level in asks at " + std::to_string(price));
+        }
+
+        Quantity level_sum = 0;
+        Timestamp prev_ts = 0;
+        for (const auto& order : level.orders) {
+            if (order.remaining == 0 || order.remaining > order.quantity) {
+                throw std::logic_error("Invariant violation: Invalid order quantities in ask " + std::to_string(order.id));
+            }
+            if (order.price != price || order.side != Side::Sell) {
+                throw std::logic_error("Invariant violation: Order properties mismatch with ask level");
+            }
+            if (order.timestamp < prev_ts) {
+                throw std::logic_error("Invariant violation: Asks FIFO timestamp order violated at level " + std::to_string(price));
+            }
+            prev_ts = order.timestamp;
+            level_sum += order.remaining;
+
+            // Check index mapping
+            const auto it = index_.find(order.id);
+            if (it == index_.end()) {
+                throw std::logic_error("Invariant violation: Resting ask order " + std::to_string(order.id) + " not in index");
+            }
+            if (it->second.side != Side::Sell || it->second.price != price || it->second.it->id != order.id) {
+                throw std::logic_error("Invariant violation: Locator index corrupted for ask " + std::to_string(order.id));
+            }
+            counted_orders++;
+        }
+
+        if (level_sum != level.total_quantity) {
+            throw std::logic_error("Invariant violation: Ask total_quantity mismatch at " + std::to_string(price));
+        }
+    }
+
+    // 4. Index size must equal counted orders
+    if (index_.size() != counted_orders) {
+        throw std::logic_error("Invariant violation: Index size " + std::to_string(index_.size()) +
+                               " does not match counted orders " + std::to_string(counted_orders));
     }
 }
 

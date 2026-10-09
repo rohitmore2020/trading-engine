@@ -47,7 +47,7 @@ public:
     // Core trading operations
     [[nodiscard]] MatchResult add(const NewOrder& order);
     [[nodiscard]] RejectReason cancel(OrderId id);
-    [[nodiscard]] MatchResult modify(OrderId id, Price new_price, Quantity new_quantity);
+    [[nodiscard]] MatchResult modify(OrderId id, Price new_price, Quantity new_quantity, Timestamp new_timestamp = 0);
 
     // Queries
     [[nodiscard]] std::optional<Price> best_bid() const noexcept;
@@ -55,6 +55,9 @@ public:
     [[nodiscard]] Quantity depth_at(Side side, Price price) const noexcept;
     [[nodiscard]] std::size_t order_count() const noexcept;
     [[nodiscard]] SymbolId symbol() const noexcept;
+
+    // Invariant validation (debug / verification)
+    void check_invariants() const;
 
 private:
     template <typename OppositeMap, typename CrossesPredicate>
