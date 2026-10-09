@@ -29,6 +29,7 @@ include(cmake/Sanitizers.cmake)
 # Core library
 add_library(te_core STATIC
     src/placeholder.cpp
+    src/validation.cpp
 )
 
 target_include_directories(te_core

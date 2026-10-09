@@ -2,6 +2,8 @@ include(GoogleTest)
 
 add_executable(te_tests
     test_smoke.cpp
+    test_order.cpp
+    test_validation.cpp
 )
 
 target_link_libraries(te_tests
